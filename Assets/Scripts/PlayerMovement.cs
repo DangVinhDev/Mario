@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEngine.SceneManagement;
 
 [RequireComponent(typeof(Rigidbody2D))]
@@ -21,6 +21,9 @@ public class PlayerMovement : MonoBehaviour
     public AudioSource audioSource;
     public AudioClip jumpSfx;
 
+    [Header("Death")]
+    public float deathReloadDelay = 1.0f;
+
     private Rigidbody2D rb;
     private SpriteRenderer sr;
     private Animator anim;
@@ -29,6 +32,13 @@ public class PlayerMovement : MonoBehaviour
     private bool isGrounded;
     private float coyoteCounter;
     private float jumpBufferCounter;
+    private bool isDead;
+
+    // Animator parameter names (đặt giống hệt trong Animator)
+    private static readonly int HashSpeed = Animator.StringToHash("Speed");
+    private static readonly int HashGrounded = Animator.StringToHash("Grounded");
+    private static readonly int HashVy = Animator.StringToHash("Vy");
+    private static readonly int HashDead = Animator.StringToHash("Dead"); // Trigger
 
     void Awake()
     {
@@ -39,10 +49,12 @@ public class PlayerMovement : MonoBehaviour
 
     void Update()
     {
-        // Input
+        if (isDead) return;
+
+        // Input ngang
         inputX = Input.GetAxisRaw("Horizontal");
 
-        // Flip sprite
+        // Lật sprite theo hướng di chuyển
         if (inputX != 0) sr.flipX = inputX < 0;
 
         // Ground check
@@ -51,8 +63,8 @@ public class PlayerMovement : MonoBehaviour
         else
             isGrounded = false;
 
+        // Coyote & Jump buffer
         if (isGrounded) coyoteCounter = coyoteTime; else coyoteCounter -= Time.deltaTime;
-
         if (Input.GetButtonDown("Jump")) jumpBufferCounter = jumpBufferTime; else jumpBufferCounter -= Time.deltaTime;
 
         if (coyoteCounter > 0f && jumpBufferCounter > 0f)
@@ -67,17 +79,18 @@ public class PlayerMovement : MonoBehaviour
             rb.velocity = new Vector2(rb.velocity.x, rb.velocity.y * 0.5f);
         }
 
-        // Animator
+        // Animator params
         if (anim)
         {
-            anim.SetFloat("speed", Mathf.Abs(rb.velocity.x));
-            anim.SetBool("grounded", isGrounded);
-            anim.SetFloat("vy", rb.velocity.y);
+            anim.SetFloat(HashSpeed, Mathf.Abs(rb.velocity.x)); // dùng cho Idle/Move
+            anim.SetBool(HashGrounded, isGrounded);            // dùng cho Jump (Grounded=false)
+            anim.SetFloat(HashVy, rb.velocity.y);              // tuỳ chọn để refine Jump lên/xuống
         }
     }
 
     void FixedUpdate()
     {
+        if (isDead) return;
         rb.velocity = new Vector2(inputX * moveSpeed, rb.velocity.y);
     }
 
@@ -89,27 +102,50 @@ public class PlayerMovement : MonoBehaviour
 
     void OnCollisionEnter2D(Collision2D col)
     {
+        if (isDead) return;
+
         if (col.collider.CompareTag("Enemy"))
         {
-            // Determine stomp by contact normals and downward velocity
+            // Xác định stomp bằng normal tiếp xúc
             bool stomp = rb.velocity.y <= 0f;
             foreach (var c in col.contacts)
             {
-                if (c.normal.y > 0.5f) { stomp = true; break; } // we landed on top
+                if (c.normal.y > 0.5f) { stomp = true; break; }
             }
 
-            Enemy enemy = col.collider.GetComponent<Enemy>();
+            var enemy = col.collider.GetComponent<Enemy>();
             if (stomp && enemy != null)
             {
                 enemy.Die();
-                Jump(); // bounce
+                Jump(); // nảy lên
             }
             else
             {
-                // Simple game over: reload current scene
-                SceneManager.LoadScene(SceneManager.GetActiveScene().buildIndex);
+                // Chết khi va ngang enemy
+                DoDeath();
             }
         }
+    }
+
+    void DoDeath()
+    {
+        if (isDead) return;
+        isDead = true;
+
+        // Ngắt di chuyển vật lý
+        rb.velocity = Vector2.zero;
+        rb.simulated = false;
+
+        // Gửi trigger Death cho Animator
+        if (anim) anim.SetTrigger(HashDead);
+
+        // Reload scene sau 1 khoảng delay để xem animation Death
+        Invoke(nameof(ReloadScene), deathReloadDelay);
+    }
+
+    void ReloadScene()
+    {
+        SceneManager.LoadScene(SceneManager.GetActiveScene().buildIndex);
     }
 
     void OnDrawGizmosSelected()
